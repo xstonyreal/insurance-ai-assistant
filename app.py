@@ -16,7 +16,7 @@ except ImportError:
 
 # ================= 配置区 =================
 # ⚠️ 请在这里填入你的真实 API KEY
-dashscope.api_key = "sk-a7079125d9394b56b0d7bed946a7ed16"
+dashscope.api_key = ""
 # =========================================
 
 st.set_page_config(page_title="保险保单解读助手", page_icon="🛡️", layout="wide")
@@ -305,4 +305,5 @@ if st.session_state.current_content:
         st.text(st.session_state.current_content[:2000] + "...")
 
 else:
+
     st.info("👆 请在左侧上传文件以开始分析。")
