@@ -53,18 +53,21 @@ def create_pdf_report(filename, persona, content_text):
         # --- 1. 字体配置 ---
 
         font_path = None
-        
-                # 1. 优先尝试当前目录下的 SimHei.ttf (适用于 Streamlit Cloud)
+               # 1. 优先尝试当前目录下的字体文件 (适用于 Streamlit Cloud)
+        # 检查 .ttf 后缀
         if os.path.exists("SimHei.ttf"):
             font_path = "SimHei.ttf"
+        # 检查 .otf 后缀 (如果你上传的是 otf 文件)
+        elif os.path.exists("NotoSansSC-Regular.otf"):
+            font_path = "NotoSansSC-Regular.otf"
+            
         # 2. 尝试 Windows 系统字体
         elif os.path.exists("C:/Windows/Fonts/simhei.ttf"):
             font_path = "C:/Windows/Fonts/simhei.ttf"
         # 3. 尝试 Mac 系统字体
         elif os.path.exists("/System/Library/Fonts/STHeiti Light.ttc"):
             font_path = "/System/Library/Fonts/STHeiti Light.ttc"
-        elif os.path.exists("C:/Windows/Fonts/simYou.ttf"):
-            font_path = "C:/Windows/Fonts/simYou.ttf"
+        
         if not font_path:
             st.error("❌ 未找到中文字体文件。请确保 SimHei.ttf 已上传到项目根目录。")
             return None
@@ -312,6 +315,7 @@ if st.session_state.current_content:
 else:
 
     st.info("👆 请在左侧上传文件以开始分析。")
+
 
 
 
