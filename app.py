@@ -63,7 +63,8 @@ def create_pdf_report(filename, persona, content_text):
         # 3. 尝试 Mac 系统字体
         elif os.path.exists("/System/Library/Fonts/STHeiti Light.ttc"):
             font_path = "/System/Library/Fonts/STHeiti Light.ttc"
-        
+        elif os.path.exists("C:/Windows/Fonts/simYou.ttf"):
+            font_path = "C:/Windows/Fonts/simYou.ttf"
         if not font_path:
             st.error("❌ 未找到中文字体文件。请确保 SimHei.ttf 已上传到项目根目录。")
             return None
@@ -311,5 +312,6 @@ if st.session_state.current_content:
 else:
 
     st.info("👆 请在左侧上传文件以开始分析。")
+
 
 
