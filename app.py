@@ -316,6 +316,16 @@ else:
 
     st.info("👆 请在左侧上传文件以开始分析。")
 
+# 2026-03-02新增问卷星link
+st.divider()
+st.subheader("💬 用户反馈")
+st.markdown("""
+您的反馈是我们进步的动力！如果您在使用过程中遇到任何问题，或有更好的建议，请花 1 分钟填写下方表单。
+""")
+
+# 方法 A：直接放链接（最简单，兼容性最好）
+st.link_button("📝 点击此处填写反馈表", "https://v.wjx.cn/vm/trZqdgp.aspx# ")
+
 
 
 
