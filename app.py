@@ -1,11 +1,104 @@
 import streamlit as st
 import os
 import dashscope
-from datetime import datetime
+from datetime import datetime, date
 from fpdf import FPDF
+from fpdf.enums import XPos, YPos  # 修复警告：用于替代过时的 ln=True
 import platform
+import hashlib
+import sqlite3
 
-# ================= 嘗試導入 PDF 庫 =================
+# =================================================================
+# 模块一：用户认证系统 (User Authentication System)
+# 功能：处理用户注册、登录、每日使用额度限制
+# =================================================================
+DB_FILE = "users.db"
+
+def init_db():
+    """初始化 SQLite 数据库，存储用户信息和使用频率数据"""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    # 字段说明：role (权限角色), daily_limit (每日配额), uses_today (今日已用次数)
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    role TEXT DEFAULT 'user',           -- 'guest' 或 'user'
+                    daily_limit INTEGER DEFAULT 5,     -- 默认每天5次，可改
+                    uses_today INTEGER DEFAULT 0,
+                    last_use_date TEXT DEFAULT ''
+                 )''')
+    conn.commit()
+    conn.close()
+
+
+def hash_password(password):
+    """使用 SHA-256 算法对密码进行哈希脱敏，确保存储安全"""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def register_user(username, password):
+    """新用户注册逻辑"""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)",
+                  (username, hash_password(password)))
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False  # 用户名已存在触发
+    finally:
+        conn.close()
+
+def login_user(username, password):
+    """用户登录验证，并检查/重置每日计数器"""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT password_hash, daily_limit, uses_today, last_use_date FROM users WHERE username=?", (username,))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return None
+    stored_hash, limit, uses_today, last_date = row
+    if stored_hash == hash_password(password):
+        # 检查是否新的一天，重置计数
+        today = date.today().isoformat()
+        # 核心逻辑：如果跨天了，自动将今日使用次数重置为 0
+        if last_date != today:
+            uses_today = 0
+        return {"username": username, "daily_limit": limit, "uses_today": uses_today, "today": today}
+    return None
+
+def update_user_usage(username, today):
+    """当 AI 生成报告成功后，增加该用户的今日使用计数"""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""UPDATE users 
+                 SET uses_today = uses_today + 1, last_use_date = ? 
+                 WHERE username = ?""", (today, username))
+    conn.commit()
+    conn.close()
+
+def get_remaining_uses(username):
+    """查询用户当天还剩多少次分析机会"""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT daily_limit, uses_today, last_use_date FROM users WHERE username=?", (username,))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return 0
+    limit, used, last_date = row
+    # 若日期不是今天，说明还没用过，返回完整配额
+    if last_date != date.today().isoformat():
+        return limit
+    return max(0, limit - used)
+
+# =================================================================
+# 模块二：文档解析与 PDF 报表生成
+# 功能：提取 PDF/TXT 内容，并将 AI 分析结果转化为美观的 PDF
+# =================================================================
+# 尝试导入 PyMuPDF (fitz)，用于处理 PDF 文本提取
 try:
     import fitz  # PyMuPDF
     PDF_SUPPORT = True
@@ -15,6 +108,9 @@ except ImportError:
 # ==================================================
 
 # ================= 配置區 =================
+# 初始化数据库 2026.03.26
+init_db()
+
 dashscope.api_key = os.getenv("DASHSCOPE_API_KEY")
 if not dashscope.api_key:
     st.error("🚫 未檢測到 DASHSCOPE_API_KEY，請在環境變量或 .env 中設定")
@@ -66,10 +162,12 @@ def extract_text_from_txt(file):
 
 # generate pdf report
 def create_pdf_report(filename, persona, content_text):
+    """将 Markdown 格式的 AI 报告转换为结构化的 PDF 文档"""
     try:
         pdf = FPDF()
         pdf.add_page()
 
+        # 中文字体兼容性处理：优先寻找本地字体文件
         font_path = None
         if os.path.exists("SimHei.ttf"):
             font_path = "SimHei.ttf"
@@ -84,7 +182,8 @@ def create_pdf_report(filename, persona, content_text):
             st.error("❌ 未找到中文字體文件。請確保 SimHei.ttf 已上傳到項目根目錄。")
             return None
 
-        pdf.add_font("SimHei", "", font_path, uni=True)
+        # 注意：此处将原有的 uni=True 去掉（新版默认支持 Unicode），并修改 cell 换行逻辑
+        pdf.add_font("SimHei", "", font_path)
         pdf.set_font("SimHei", size=12)
 
         PRIMARY_COLOR = (0, 82, 155)
@@ -93,12 +192,13 @@ def create_pdf_report(filename, persona, content_text):
 
         pdf.set_text_color(*PRIMARY_COLOR)
         pdf.set_font("SimHei", size=20)
-        pdf.cell(0, 18, "🛡️ 保單深度解讀報告", ln=True, align='C')
+        # 修改点：用 new_x 和 new_y 替代 ln=True
+        pdf.cell(0, 18, "🛡️ 保單深度解讀報告", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
         pdf.ln(3)
 
         pdf.set_text_color(100, 100, 100)
         pdf.set_font("SimHei", size=10)
-        pdf.cell(0, 8, "—— AI 驅動的智能風險分析 ——", ln=True, align='C')
+        pdf.cell(0, 8, "—— AI 驅動的智能風險分析 ——", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
         pdf.ln(10)
 
         pdf.set_fill_color(*BG_COLOR)
@@ -106,9 +206,9 @@ def create_pdf_report(filename, persona, content_text):
 
         pdf.set_text_color(60, 60, 60)
         pdf.set_font("SimHei", size=10)
-        pdf.cell(0, 8, f"📄 分析文件：{filename}", ln=True)
-        pdf.cell(0, 8, f"🎭 專家視角：{persona}", ln=True)
-        pdf.cell(0, 8, f"🕒 生成時間：{datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True)
+        pdf.cell(0, 8, f"📄 分析文件：{filename}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(0, 8, f"🎭 專家視角：{persona}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(0, 8, f"🕒 生成時間：{datetime.now().strftime('%Y-%m-%d %H:%M')}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(15)
 
         lines = content_text.split('\n')
@@ -125,7 +225,7 @@ def create_pdf_report(filename, persona, content_text):
                 icon = "⚠️" if "陷阱" in text or "不賠" in text else "💡"
                 pdf.set_text_color(*ACCENT_COLOR if "陷阱" in text else PRIMARY_COLOR)
                 pdf.set_font("SimHei", size=14)
-                pdf.cell(0, 10, f"{icon} {text}", ln=True)
+                pdf.cell(0, 10, f"{icon} {text}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
                 pdf.set_text_color(0, 0, 0)
                 pdf.set_font("SimHei", size=12)
                 pdf.ln(4)
@@ -135,7 +235,7 @@ def create_pdf_report(filename, persona, content_text):
                 text = line.replace("##", "").strip()
                 pdf.set_text_color(*PRIMARY_COLOR)
                 pdf.set_font("SimHei", size=15)
-                pdf.cell(0, 12, f"📌 {text}", ln=True)
+                pdf.cell(0, 12, f"📌 {text}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
                 pdf.set_text_color(0, 0, 0)
                 pdf.set_font("SimHei", size=12)
                 pdf.ln(5)
@@ -172,10 +272,11 @@ def create_pdf_report(filename, persona, content_text):
 
         pdf.set_text_color(100, 100, 100)
         pdf.set_font("SimHei", size=9)
-        pdf.cell(0, 5, "本報告由 AI 生成，基於您提供的保單條款進行分析。", ln=True, align='C')
-        pdf.cell(0, 5, "結果僅供參考，具體理賠以保險公司最終審核為準。", ln=True, align='C')
+        pdf.cell(0, 5, "本報告由 AI 生成，基於您提供的保單條款進行分析。", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
+        pdf.cell(0, 5, "結果僅供參考，具體理賠以保險公司最終審核為準。", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
 
-        return bytes(pdf.output(dest='S'))
+        # 修改点：dest='S' 已弃用，显式转换为 bytes 格式，解决 Streamlit 不识别 bytearray 的问题
+        return bytes(pdf.output())
 
     except Exception as e:
         st.error(f"生成 PDF 失敗：{e}")
@@ -183,7 +284,15 @@ def create_pdf_report(filename, persona, content_text):
         traceback.print_exc()
         return None
 
-# --- 界面布局 ---
+# =================================================================
+# 模块三：Streamlit UI 布局与 AI 流式交互
+# 功能：构建 Web 界面，调用 Qwen 模型并实现打字机效果
+# =================================================================
+
+# 初始化 DashScope (通义千问 API)
+dashscope.api_key = os.getenv("DASHSCOPE_API_KEY")
+init_db()
+
 st.title("🛡️ 保單智能解讀助手")
 st.markdown("上傳保單，選擇**專家視角**，一鍵獲取深度解讀報告！")
 
@@ -245,7 +354,62 @@ with st.sidebar:
         st.info("👈 請先上傳文件")
 
     st.divider()
-    st.header("🎭 2. 選擇專家視角")
+    # ================= 新增：登录 / 注册 =================
+    st.header("🔑 2. 授权登录")
+
+    if 'user_info' not in st.session_state:
+        st.session_state.user_info = None
+
+    if st.session_state.user_info is None:
+        # 未登录状态
+        tab_login, tab_register = st.tabs(["登录", "注册"])
+
+        with tab_login:
+            username = st.text_input("用户名", key="login_user")
+            password = st.text_input("密码", type="password", key="login_pass")
+            if st.button("登录", use_container_width=True):
+                user_data = login_user(username, password)
+                if user_data:
+                    st.session_state.user_info = user_data
+                    st.success(f"✅ 欢迎回来，{username}！")
+                    st.rerun()
+                else:
+                    st.error("用户名或密码错误")
+
+        with tab_register:
+            new_user = st.text_input("用户名（建议用邮箱或手机号）", key="reg_user")
+            new_pass = st.text_input("设置密码", type="password", key="reg_pass")
+            if st.button("注册并登录", use_container_width=True):
+                if register_user(new_user, new_pass):
+                    # 注册成功后自动登录
+                    st.session_state.user_info = {
+                        "username": new_user,
+                        "daily_limit": 10,
+                        "uses_today": 0,
+                        "today": date.today().isoformat()
+                    }
+                    st.success(f"🎉 注册成功！欢迎 {new_user}")
+                    st.rerun()
+                else:
+                    st.error("用户名已被注册")
+
+        st.info("👤 游客模式：每 Session 最多分析 **3 次**")
+
+    else:
+        # 已登录状态
+        username = st.session_state.user_info["username"]
+        remaining = get_remaining_uses(username)
+
+        st.success(f"👤 已登录：**{username}**")
+        st.caption(f"今日剩余次数：**{remaining}** 次")
+
+        if st.button("退出登录"):
+            st.session_state.user_info = None
+            st.rerun()
+
+    st.divider()
+
+    st.header("🎭 3. 選擇專家視角")
     persona = st.selectbox(
         "誰來幫您分析？",
         (
@@ -278,72 +442,125 @@ if st.session_state.current_content:
     tab_report, tab_chat = st.tabs(["完整報告", "追問對話"])
 
     with tab_report:
-        with st.container():
-            st.markdown("""
-            <div style="background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.08);">
-            """, unsafe_allow_html=True)
+        # --- 第一步：计算权限（不重复造轮子） ---
+        is_logged_in = st.session_state.user_info is not None
+        if is_logged_in:
+            username = st.session_state.user_info["username"]
+            remaining = get_remaining_uses(username)
+            limit_msg = f"✅ 已登錄用戶：{username} | 今日剩餘：{remaining} 次"
+        else:
+            # 确保游客模式下也有计数器变量
+            if 'guest_uses' not in st.session_state: st.session_state.guest_uses = 0
+            remaining = 3 - st.session_state.guest_uses
+            limit_msg = f"🟡 遊客模式 | 本次會話剩餘：{remaining} 次"
 
-            if st.session_state.report_text:
-                st.markdown(st.session_state.report_text)
+        can_generate = remaining > 0
+
+        # --- 第二步：分支渲染（根据 report_text 是否有值来决定显示什么） ---
+        if st.session_state.report_text:
+            # 【分支 A：显示报告模式】
+            # 因为 session_state 跨标签页共享，这里显示的内容就是 AI 刚写完的内容
+            st.markdown(st.session_state.report_text)
+
+            # PDF 下载逻辑
+            pdf_data = create_pdf_report(st.session_state.current_filename, persona, st.session_state.report_text)
+            if pdf_data:
+                st.download_button("📥 下載 PDF 分析報告", data=pdf_data,
+                                   file_name=f"分析報告_{st.session_state.current_filename}.pdf",
+                                   mime="application/pdf", use_container_width=True)
+
+            # 重置逻辑：清除报告，让页面回到【分支 B】
+            if st.button("🔄 重新分析（將消耗次數）", use_container_width=True):
+                if can_generate:
+                    st.session_state.report_text = None
+                    st.session_state.messages = []  # 清空对话历史，避免旧报告干扰新追问
+                    st.rerun()
+
+        else:
+            # 【分支 B：显示生成按钮模式】 标准写法，确保 Streamlit 正常渲染组件
+            if can_generate:
+                st.info(limit_msg)
             else:
-                st.info("點擊下方按鈕生成報告")
+                st.error(f"❌ {limit_msg} (已達上限)")
 
-            st.markdown("</div>", unsafe_allow_html=True)
+            if can_generate:
+                if st.button("🚀 開始生成分析報告", type="primary", use_container_width=True):
+                    with st.spinner(f"🤖 {persona} 正在深度思考中..."):
+                        try:
+                            # 1. 准备给 AI 的初始指令
+                            content_preview = st.session_state.current_content[:15000]
+                            initial_prompt = f"{system_instruction}\n\n【保單內容】:\n{content_preview}"
 
-        content_preview = st.session_state.current_content[:15000]
-        initial_prompt = f"{system_instruction}\n\n【保單內容】:\n{content_preview}"
-
-        if st.button("🚀 生成分析報告", type="primary", use_container_width=True):
-            with st.spinner(f"🤖 {persona} 正在深度思考中..."):
-                try:
-                    response = dashscope.Generation.call(
-                        model='qwen-turbo',
-                        messages=[{'role': 'user', 'content': initial_prompt}]
-                    )
-
-                    if response.status_code == 200:
-                        result_text = response.output.text
-                        st.session_state.report_text = result_text
-                        st.session_state.messages.append({"role": "assistant", "content": result_text})
-
-                        # 成功生成報告後，計數 +1（計保單文件數）
-                        increment_usage_count()
-                        st.rerun()  # 刷新頁面顯示新計數
-
-                        pdf_bytes = create_pdf_report(
-                            st.session_state.current_filename,
-                            persona,
-                            result_text
-                        )
-                        if pdf_bytes:
-                            st.download_button(
-                                label="📥 下載報告為 PDF",
-                                data=pdf_bytes,
-                                file_name=f"{st.session_state.current_filename}_解讀報告.pdf",
-                                mime="application/pdf",
-                                type="primary"
+                            # 2. 调用流式接口
+                            report_placeholder = st.empty()
+                            full_content = ""
+                            responses = dashscope.Generation.call(
+                                model='qwen-turbo',
+                                messages=[{'role': 'user', 'content': initial_prompt}],
+                                stream=True, incremental_output=True
                             )
-                    else:
-                        st.error(f"AI 調用失敗：{response.message}")
-                except Exception as e:
-                    st.error(f"發生錯誤：{e}")
 
+                            # 1. 流式输出循环
+                            for response in responses:
+                                if response.status_code == 200:
+                                    chunk = response.output.text
+                                    full_content += chunk
+                                    report_placeholder.markdown(full_content + "▌")  # 实时渲染流式文字
+
+                            # 3. 【核心点】生成结束后存入 Session 记忆
+                            if full_content:
+                                # 1. 先把光标 ▌ 去掉，把内容固定下来，消除视觉上的“跳动”
+                                report_placeholder.markdown(full_content)
+
+                                # 2. 存入 Session 记忆（这不会触发 UI 刷新）
+                                st.session_state.report_text = full_content
+                                st.session_state.messages = [{"role": "assistant", "content": full_content}]
+
+                                # 3. 扣除次数逻辑
+                                increment_usage_count()
+                                if not is_logged_in:
+                                    st.session_state.guest_uses += 1
+                                else:
+                                    update_user_usage(username, date.today().isoformat())
+
+                                # 4. 执行跳转刷新
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"發生錯誤：{e}")
     with tab_chat:
+        # --- 1. 渲染历史对话记录 ---
+        # 这里的 messages 列表包含了：
+        #   - 初始生成的报告 (由 tab_report 在生成成功后存入)
+        #   - 用户后续的所有提问
+        #   - AI 针对提问的所有回答
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
+        # --- 2. 追问输入框逻辑 ---
+        # 使用 if prompt := st.chat_input(...) 语法：只有用户输入并回车时才会进入此分支
         if prompt := st.chat_input("在此繼續追問（例如：這個 exclusion 實際影響大唔大？）"):
+
+            # A. 立即记录并显示用户的提问
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"):
                 st.markdown(prompt)
 
+            # B. 调用 AI 进行针对性回答
             with st.chat_message("assistant"):
                 with st.spinner("思考中..."):
                     try:
+                        # 【核心：上下文获取】
+                        # 优先使用已生成的“完整报告”作为 AI 思考的基础背景。
+                        # 如果报告还没生成（理论上概率极低），则截取保单前 3000 字作为背景。
                         context = st.session_state.report_text or st.session_state.current_content[:3000]
+
+                        # 【核心：Prompt 构造】
+                        # 将：1. 专家人设指令 + 2. 之前的报告/保单背景 + 3. 用户的新问题 揉合在一起。
+                        # 这样 AI 就能实现“基于理赔调查员身份，针对刚才报告中提到的陷阱进行深度解答”。
                         chat_prompt = f"{system_instruction}\n\n【之前報告或保單內容】:\n{context}\n\n【用戶新問題】:\n{prompt}"
 
+                        # 调用非流式接口（追问通常较短，非流式响应更稳健）
                         response = dashscope.Generation.call(
                             model='qwen-turbo',
                             messages=[{'role': 'user', 'content': chat_prompt}]
@@ -352,12 +569,23 @@ if st.session_state.current_content:
                         if response.status_code == 200:
                             reply = response.output.text
                             st.markdown(reply)
-                            st.session_state.messages.append({"role": "assistant", "content": reply})
-                        else:
-                            st.error("追問失敗，請重試")
-                    except Exception as e:
-                        st.error(f"追問錯誤：{e}")
 
+                            # C. 将 AI 的回答存入 session_state 消息历史
+                            st.session_state.messages.append({"role": "assistant", "content": reply})
+
+                            # D. 【关键：状态同步】
+                            # 执行 rerun() 强制 Streamlit 重新运行脚本。
+                            # 这样可以确保：
+                            #   1. 追问的文字被固化在页面上。
+                            #   2. 主标签页 (tab_report) 保持“报告显示模式”，不会因为追问动作而误跳回“生成按钮模式”。
+                            st.rerun()
+                        else:
+                            st.error(f"追問失敗，AI 響應錯誤：{response.message}")
+                    except Exception as e:
+                        st.error(f"追問時發生技術錯誤：{e}")
+
+    # --- 3. 原始文字查看器 (折叠框) ---
+    # 放在最下面作为兜底参考，不影响主流程操作
     with st.expander("👀 查看提取的原始文字"):
         st.text(st.session_state.current_content[:2000] + "...")
 
