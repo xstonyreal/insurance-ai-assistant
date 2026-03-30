@@ -270,6 +270,14 @@ def create_pdf_report(filename, persona, content_text):
         pdf.set_fill_color(*BG_COLOR)
         pdf.rect(0, pdf.get_y(), 210, 20, 'F')
 
+        # 报告的页脚增加免责声明
+        pdf.set_y(-25)  # 留出足夠空間
+        pdf.set_font("SimHei", size=8)
+        pdf.set_text_color(150, 150, 150)
+        pdf.multi_cell(0, 4,
+                       "【法律聲明】本報告由 AI 自動生成，僅供學習交流。AI 無法替代專業保險經紀人或律師。任何理賠爭議請以保險公司官方解釋為準。下載即代表您已閱讀並同意本免責條款。",
+                       align='C')
+
         pdf.set_text_color(100, 100, 100)
         pdf.set_font("SimHei", size=9)
         pdf.cell(0, 5, "本報告由 AI 生成，基於您提供的保單條款進行分析。", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
@@ -442,6 +450,11 @@ if st.session_state.current_content:
     tab_report, tab_chat = st.tabs(["完整報告", "追問對話"])
 
     with tab_report:
+
+        #免责声明
+        if st.session_state.report_text:
+            st.warning("⚠️ **提醒**：AI 分析僅供參考，請核對保險合同原件。")
+            st.markdown(st.session_state.report_text)
         # --- 第一步：计算权限（不重复造轮子） ---
         is_logged_in = st.session_state.user_info is not None
         if is_logged_in:
@@ -598,5 +611,10 @@ st.markdown("""
 您的反饋是我們進步的動力！如果您在使用過程中遇到任何問題，或有更好的建議，請花 1 分鐘填寫下方表單。
 """)
 st.link_button("📝 點擊此處填寫反饋表", "https://v.wjx.cn/vm/trZqdgp.aspx# ")
-# 正在 dev 分支测试新功能
-#引入DEV check out 操作
+
+# 免责声明
+st.divider()
+st.caption("""
+**⚖️ 免責聲明：** 本工具由 AI 技術驅動，生成的報告僅供參考，不構成任何保險購買、理賠建議或法律意見。  
+保險條款極其複雜，AI 識別可能存在偏差（幻觉）。**具體保障範圍、理賠條件及給付金額，請務必以保險公司簽章的正式合同及法律法規為準。** 開發者不對因使用本報告導致的任何決策後果承擔法律責任。
+""")
