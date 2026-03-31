@@ -162,8 +162,19 @@ def extract_text_from_txt(file):
 
 # generate pdf report
 def create_pdf_report(filename, persona, content_text):
-    """将 Markdown 格式的 AI 报告转换为结构化的 PDF 文档"""
+    """
+    [PDF 引擎：核心逻辑分区表]
+    ---------------------------------------------------------
+    分区 1: 资源初始化 (Environment & Init)
+    分区 2: 静态页眉 (Global Header)
+    分区 3: 动态正文循环 (AI Content Loop)
+    分区 4: 系统级页脚追加 (System Disclaimer)
+    分区 5: 唯一出口 (Final Return)
+    ---------------------------------------------------------
+    """
     try:
+        # === 分区 1：资源初始化区 ===
+        # 职责：加载字体、实例化对象。若失败则中断。
         pdf = FPDF()
         pdf.add_page()
 
@@ -190,6 +201,8 @@ def create_pdf_report(filename, persona, content_text):
         ACCENT_COLOR = (230, 80, 80)
         BG_COLOR = (245, 249, 252)
 
+        # === 分区 2：静态页眉区 ===
+        # 职责：渲染报告顶部的固定格式信息。
         pdf.set_text_color(*PRIMARY_COLOR)
         pdf.set_font("SimHei", size=20)
         # 修改点：用 new_x 和 new_y 替代 ln=True
@@ -201,9 +214,9 @@ def create_pdf_report(filename, persona, content_text):
         pdf.cell(0, 8, "—— AI 驅動的智能風險分析 ——", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
         pdf.ln(10)
 
+        # 渲染背景信息框
         pdf.set_fill_color(*BG_COLOR)
         pdf.rect(20, pdf.get_y(), 170, 30, 'F')
-
         pdf.set_text_color(60, 60, 60)
         pdf.set_font("SimHei", size=10)
         pdf.cell(0, 8, f"📄 分析文件：{filename}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
@@ -211,6 +224,9 @@ def create_pdf_report(filename, persona, content_text):
         pdf.cell(0, 8, f"🕒 生成時間：{datetime.now().strftime('%Y-%m-%d %H:%M')}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(15)
 
+        # === 分区 3：动态正文循环区 (AI Content Loop) ===
+        # 职责：逐行解析渲染 AI 生成的 Markdown 内容
+        # 警告：此处严禁任何 return 语句，确保循环跑完
         lines = content_text.split('\n')
         in_list = False
 
@@ -220,6 +236,7 @@ def create_pdf_report(filename, persona, content_text):
                 pdf.ln(4)
                 continue
 
+            # 处理三级标题
             if line.startswith("###"):
                 text = line.replace("###", "").strip()
                 icon = "⚠️" if "陷阱" in text or "不賠" in text else "💡"
@@ -231,6 +248,7 @@ def create_pdf_report(filename, persona, content_text):
                 pdf.ln(4)
                 in_list = False
 
+            # 处理二级标题
             elif line.startswith("##"):
                 text = line.replace("##", "").strip()
                 pdf.set_text_color(*PRIMARY_COLOR)
@@ -241,14 +259,15 @@ def create_pdf_report(filename, persona, content_text):
                 pdf.ln(5)
                 in_list = False
 
+            # 处理列表项
             elif line.startswith("-") or line.startswith("•"):
                 text = line[1:].strip()
                 clean_text = text.replace("**", "")
-
                 if not in_list:
                     pdf.ln(2)
                     in_list = True
 
+                # 绘制列表小圆点
                 x_start = pdf.get_x()
                 y_start = pdf.get_y()
                 pdf.set_text_color(80, 80, 80)
@@ -258,25 +277,41 @@ def create_pdf_report(filename, persona, content_text):
                 pdf.set_text_color(0, 0, 0)
                 pdf.ln(2)
 
+            # 处理普通段落
             else:
                 clean_text = line.replace("**", "")
                 pdf.set_text_color(50, 50, 50)
+                # --- 关键修正：重置 X 坐标到左边距 ---
+                pdf.set_x(20)
                 pdf.multi_cell(0, 7, clean_text)
                 pdf.set_text_color(0, 0, 0)
                 pdf.ln(3)
                 in_list = False
 
-        pdf.set_y(-20)
-        pdf.set_fill_color(*BG_COLOR)
-        pdf.rect(0, pdf.get_y(), 210, 20, 'F')
+        # --- 分区 3 彻底结束锚点 (逻辑终点) ---
 
-        pdf.set_text_color(100, 100, 100)
+
+        # === 分区 4：系统级页脚追加区 (System Disclaimer) ===
+        # 职责：强制追加法律免责声明，必须与 for 循环左对齐
+        pdf.ln(15)  # 留出 15mm 的间距，作为正文和声明的视觉分隔
+
+        # 2. 画一条浅灰色的水平分割线（可选，增加专业感）
+        pdf.set_draw_color(220, 220, 220)
+        pdf.line(20, pdf.get_y(), 190, pdf.get_y())
+        pdf.ln(5)
+
+        # 3. 直接像写普通段落一样写免责声明
+        # 这种方法会自动处理换页，绝不会产生空白页或文字重叠
+        pdf.set_text_color(120, 120, 120)
         pdf.set_font("SimHei", size=9)
-        pdf.cell(0, 5, "本報告由 AI 生成，基於您提供的保單條款進行分析。", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
-        pdf.cell(0, 5, "結果僅供參考，具體理賠以保險公司最終審核為準。", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
+        # --- 关键修正：确保声明文字从左侧开始，不被上方逻辑带偏 ---
+        pdf.set_x(20)
+        disclaimer = "【法律聲明】本報告由 AI 自動生成，僅供學習交流。AI 無法替代專業保險經紀人或律師。任何理賠爭議請以保險公司官方解釋為準。下載即代表您已閱讀並同意本免責條款。結果僅供參考，具體理賠以保險公司最終審核為準。"
+        pdf.multi_cell(0, 6, disclaimer, align='L')
 
-        # 修改点：dest='S' 已弃用，显式转换为 bytes 格式，解决 Streamlit 不识别 bytearray 的问题
-        return bytes(pdf.output())
+        # === 分区 5：唯一出口区 ===
+        # 职责：统一执行导出，确保字节流完整性。
+        return bytes(pdf.output())  # 保持原有的返回逻辑
 
     except Exception as e:
         st.error(f"生成 PDF 失敗：{e}")
@@ -462,18 +497,58 @@ if st.session_state.current_content:
             # 因为 session_state 跨标签页共享，这里显示的内容就是 AI 刚写完的内容
             st.markdown(st.session_state.report_text)
 
-            # PDF 下载逻辑
-            pdf_data = create_pdf_report(st.session_state.current_filename, persona, st.session_state.report_text)
-            if pdf_data:
-                st.download_button("📥 下載 PDF 分析報告", data=pdf_data,
-                                   file_name=f"分析報告_{st.session_state.current_filename}.pdf",
-                                   mime="application/pdf", use_container_width=True)
+            # =================================================================
+            # 分区：PDF 報告封裝與下載區 (按需計算模式)
+            # =================================================================
+            # 【設計意圖】:
+            # 由於 create_pdf_report 涉及字體加載、排版計算與字節流處理，耗時約 3 秒。
+            # 為避免 Streamlit 在標籤頁切換或對話刷新時“全量重跑”導致 UI 卡死，
+            # 此處採用“緩存變量 + 觸發按鈕”的物理隔離機制。只有用戶點擊下載時才消耗資源。
+            # =================================================================
+
+            # 1. 緩存初始化：確保 Session 中有一個存放 PDF 二進制數據的“籃子”
+            if "pdf_cache" not in st.session_state:
+                st.session_state.pdf_cache = None
+
+            # 2. 物理隔離按鈕：這是 UI 的“防火牆”
+            # 只要不點擊此按鈕，create_pdf_report 就不會被觸發，標籤頁切換將保持“瞬時響應”
+            # 在這裡增加 disabled 參數，引用緩存狀態
+            if st.button("🛠️ 點擊封裝 PDF 數據", use_container_width=True,
+                disabled=st.session_state.pdf_cache is not None  # 新增：若已有緩存則置灰
+            ):
+                with st.spinner("🤖 正在封裝..."):
+                    st.session_state.pdf_cache = create_pdf_report(
+                        st.session_state.current_filename,
+                        persona,
+                        st.session_state.report_text
+                    )
+                    # 執行完畢後強制刷新，讓按鈕狀態立刻更新為置灰
+                    st.rerun()
+
+            # 3. 如果缓存里有东西了，再显示下载按钮
+            if st.session_state.pdf_cache:
+                st.download_button(
+                    label="📥 點擊此處保存 PDF",
+                    data=st.session_state.pdf_cache,
+                    file_name=f"分析報告_{st.session_state.current_filename}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+            # --- PDF 報告封裝與下載區：结束 ---
 
             # 重置逻辑：清除报告，让页面回到【分支 B】
             if st.button("🔄 重新分析（將消耗次數）", use_container_width=True):
                 if can_generate:
+                    # 【關鍵清理】: 必須手動清除 PDF 緩存。
+                    # 緣由：由於我們採用了延遲加載(Lazy Loading)策略將 PDF 存入 session_state，
+                    # 若不在此處清理，用戶生成新報告後，下載按鈕仍會指向“舊報告”的 PDF 數據。
+                    st.session_state.pdf_cache = None
+
+                    # 重置報告文本與對話歷史，確保新一輪分析環境純淨
                     st.session_state.report_text = None
                     st.session_state.messages = []  # 清空对话历史，避免旧报告干扰新追问
+
+                    # 觸發頁面刷新，讓 UI 回到“初始生成”狀態
                     st.rerun()
 
         else:
@@ -533,57 +608,76 @@ if st.session_state.current_content:
         #   - 初始生成的报告 (由 tab_report 在生成成功后存入)
         #   - 用户后续的所有提问
         #   - AI 针对提问的所有回答
+        # =================================================================
+        # 邏輯意圖：追問模式門檻校驗
+        # 確保系統緩存中已有分析數據 (report_text)，否則屏蔽所有對話組件
+        # =================================================================
+        if not st.session_state.report_text:
+            st.subheader("💬 AI 深度追問")
+            st.info("💡 模式鎖定中：請先在左側完成『保單分析』，生成報告後即可開啟 AI 對話。")
+            # 使用空的 container 撐起高度，保持視覺統一，但不渲染對話框
+            st.stop()
+
+        # --- 只有通過上方校驗，才會執行下方的對話邏輯 ---
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
-        # --- 2. 追问输入框逻辑 ---
+        # --- 2. 追问输入框逻辑  (控制成本：限額 3 次)---
         # 使用 if prompt := st.chat_input(...) 语法：只有用户输入并回车时才会进入此分支
-        if prompt := st.chat_input("在此繼續追問（例如：這個 exclusion 實際影響大唔大？）"):
+        # 統計用戶已提問次數（role 為 user 的消息數量）
+        chat_count = len([m for m in st.session_state.messages if m["role"] == "user"])
 
-            # A. 立即记录并显示用户的提问
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
+        # 判斷是否達到限制
+        if chat_count < 3:
+            # 628: 只有未達限制時，才渲染可用的輸入框
+            if prompt := st.chat_input("在此繼續追問（例如：這個 exclusion 實際影響大唔大？）"):
+                # A. 立即記錄並顯示用戶的提問
+                st.session_state.messages.append({"role": "user", "content": prompt})
+                with st.chat_message("user"):
+                    st.markdown(prompt)
 
-            # B. 调用 AI 进行针对性回答
-            with st.chat_message("assistant"):
-                with st.spinner("思考中..."):
-                    try:
-                        # 【核心：上下文获取】
-                        # 优先使用已生成的“完整报告”作为 AI 思考的基础背景。
-                        # 如果报告还没生成（理论上概率极低），则截取保单前 3000 字作为背景。
-                        context = st.session_state.report_text or st.session_state.current_content[:3000]
+                # B. 调用 AI 进行针对性回答
+                with st.chat_message("assistant"):
+                    with st.spinner("思考中..."):
+                        try:
+                            # 【核心：上下文获取】
+                            # 优先使用已生成的“完整报告”作为 AI 思考的基础背景。
+                            # 如果报告还没生成（理论上概率极低），则截取保单前 3000 字作为背景。
+                            context = st.session_state.report_text or st.session_state.current_content[:3000]
 
-                        # 【核心：Prompt 构造】
-                        # 将：1. 专家人设指令 + 2. 之前的报告/保单背景 + 3. 用户的新问题 揉合在一起。
-                        # 这样 AI 就能实现“基于理赔调查员身份，针对刚才报告中提到的陷阱进行深度解答”。
-                        chat_prompt = f"{system_instruction}\n\n【之前報告或保單內容】:\n{context}\n\n【用戶新問題】:\n{prompt}"
+                            # 【核心：Prompt 构造】
+                            # 将：1. 专家人设指令 + 2. 之前的报告/保单背景 + 3. 用户的新问题 揉合在一起。
+                            # 这样 AI 就能实现“基于理赔调查员身份，针对刚才报告中提到的陷阱进行深度解答”。
+                            chat_prompt = f"{system_instruction}\n\n【之前報告或保單內容】:\n{context}\n\n【用戶新問題】:\n{prompt}"
 
-                        # 调用非流式接口（追问通常较短，非流式响应更稳健）
-                        response = dashscope.Generation.call(
-                            model='qwen-turbo',
-                            messages=[{'role': 'user', 'content': chat_prompt}]
-                        )
+                            # 调用非流式接口（追问通常较短，非流式响应更稳健）
+                            response = dashscope.Generation.call(
+                                model='qwen-turbo',
+                                messages=[{'role': 'user', 'content': chat_prompt}]
+                            )
 
-                        if response.status_code == 200:
-                            reply = response.output.text
-                            st.markdown(reply)
+                            if response.status_code == 200:
+                                reply = response.output.text
+                                st.markdown(reply)
 
-                            # C. 将 AI 的回答存入 session_state 消息历史
-                            st.session_state.messages.append({"role": "assistant", "content": reply})
+                                # C. 将 AI 的回答存入 session_state 消息历史
+                                st.session_state.messages.append({"role": "assistant", "content": reply})
 
-                            # D. 【关键：状态同步】
-                            # 执行 rerun() 强制 Streamlit 重新运行脚本。
-                            # 这样可以确保：
-                            #   1. 追问的文字被固化在页面上。
-                            #   2. 主标签页 (tab_report) 保持“报告显示模式”，不会因为追问动作而误跳回“生成按钮模式”。
-                            st.rerun()
-                        else:
-                            st.error(f"追問失敗，AI 響應錯誤：{response.message}")
-                    except Exception as e:
-                        st.error(f"追問時發生技術錯誤：{e}")
-
+                                # D. 【关键：状态同步】
+                                # 执行 rerun() 强制 Streamlit 重新运行脚本。
+                                # 这样可以确保：
+                                #   1. 追问的文字被固化在页面上。
+                                #   2. 主标签页 (tab_report) 保持“报告显示模式”，不会因为追问动作而误跳回“生成按钮模式”。
+                                st.rerun()
+                            else:
+                                st.error(f"追問失敗，AI 響應錯誤：{response.message}")
+                        except Exception as e:
+                            st.error(f"追問時發生技術錯誤：{e}")
+        else:
+            # 640: 達到限制，渲染置灰輸入框
+            st.chat_input("🚫 已達到本輪追問次數上限", disabled=True)
+            st.warning("💡 您已完成 3 次追問。若需重新對話，請點擊『重新分析』。")
     # --- 3. 原始文字查看器 (折叠框) ---
     # 放在最下面作为兜底参考，不影响主流程操作
     with st.expander("👀 查看提取的原始文字"):
